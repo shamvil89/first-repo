@@ -1,2 +1,2 @@
 # first-repo
-This is my first repository
+I store random or minor scripts here
