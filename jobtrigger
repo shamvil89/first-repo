@@ -1,0 +1,456 @@
+USE [msdb]
+GO
+
+/****** Object:  Trigger [dbo].[TRIG_SYSJOBS_INSERT_UPDATE_DELETE]    Script Date: 17-09-2020 14:10:36 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE    TRIGGER [dbo].[TRIG_SYSJOBS_INSERT_UPDATE_DELETE]
+ON [dbo].[sysjobs]
+FOR INSERT, UPDATE, DELETE
+AS 
+BEGIN
+    SET NOCOUNT ON;
+
+IF OBJECT_ID(N'TEMPDB..#DELETED') IS NOT NULL
+BEGIN
+DROP TABLE #DELETED
+END
+
+	CREATE TABLE #DELETED  ([JOB_ID] [UNIQUEIDENTIFIER] NOT NULL,
+	[ORIGINATING_SERVER_ID] [INT] NOT NULL,
+	[NAME] [SYSNAME] NOT NULL,
+	[ENABLED] [TINYINT] NOT NULL,
+	[DESCRIPTION] [NVARCHAR](512) NULL,
+	[START_STEP_ID] [INT] NOT NULL,
+	[CATEGORY_ID] [INT] NOT NULL,
+	[OWNER_SID] [VARBINARY](85) NOT NULL,
+	[NOTIFY_LEVEL_EVENTLOG] [INT] NOT NULL,
+	[NOTIFY_LEVEL_EMAIL] [INT] NOT NULL,
+	[NOTIFY_LEVEL_NETSEND] [INT] NOT NULL,
+	[NOTIFY_LEVEL_PAGE] [INT] NOT NULL,
+	[NOTIFY_EMAIL_OPERATOR_ID] [INT] NOT NULL,
+	[NOTIFY_NETSEND_OPERATOR_ID] [INT] NOT NULL,
+	[NOTIFY_PAGE_OPERATOR_ID] [INT] NOT NULL,
+	[DELETE_LEVEL] [INT] NOT NULL,
+	[DATE_CREATED] [DATETIME] NOT NULL,
+	[DATE_MODIFIED] [DATETIME] NOT NULL,
+	[VERSION_NUMBER] [INT] NOT NULL)
+
+IF OBJECT_ID(N'TEMPDB..#INSERTED') IS NOT NULL
+BEGIN
+DROP TABLE #INSERTED
+END
+
+CREATE TABLE #INSERTED  ([JOB_ID] [UNIQUEIDENTIFIER] NOT NULL,
+	[ORIGINATING_SERVER_ID] [INT] NOT NULL,
+	[NAME] [SYSNAME] NOT NULL,
+	[ENABLED] [TINYINT] NOT NULL,
+	[DESCRIPTION] [NVARCHAR](512) NULL,
+	[START_STEP_ID] [INT] NOT NULL,
+	[CATEGORY_ID] [INT] NOT NULL,
+	[OWNER_SID] [VARBINARY](85) NOT NULL,
+	[NOTIFY_LEVEL_EVENTLOG] [INT] NOT NULL,
+	[NOTIFY_LEVEL_EMAIL] [INT] NOT NULL,
+	[NOTIFY_LEVEL_NETSEND] [INT] NOT NULL,
+	[NOTIFY_LEVEL_PAGE] [INT] NOT NULL,
+	[NOTIFY_EMAIL_OPERATOR_ID] [INT] NOT NULL,
+	[NOTIFY_NETSEND_OPERATOR_ID] [INT] NOT NULL,
+	[NOTIFY_PAGE_OPERATOR_ID] [INT] NOT NULL,
+	[DELETE_LEVEL] [INT] NOT NULL,
+	[DATE_CREATED] [DATETIME] NOT NULL,
+	[DATE_MODIFIED] [DATETIME] NOT NULL,
+	[VERSION_NUMBER] [INT] NOT NULL)
+
+	INSERT INTO #DELETED SELECT * FROM DELETED
+	INSERT INTO #INSERTED SELECT * FROM INSERTED
+
+DECLARE @ACTION AS CHAR(1);
+DECLARE @JOB_NAME VARCHAR(1024);
+DECLARE @AFFECTED_COL NVARCHAR(100);
+DECLARE @COLUMN VARCHAR(100)
+DECLARE @CMD NVARCHAR (500)
+DECLARE @COLAFF TABLE (COLUMNS NVARCHAR(200))
+
+    SET @ACTION = 'I'; -- SET ACTION TO INSERT BY DEFAULT.
+	SELECT @JOB_NAME =NAME FROM INSERTED
+    IF EXISTS(SELECT * FROM DELETED)
+    BEGIN
+        SET @ACTION = 
+            CASE
+                WHEN EXISTS(SELECT * FROM INSERTED) THEN 'U' -- SET ACTION TO UPDATED.
+                ELSE 'D' -- SET ACTION TO DELETED.       
+            END
+		SELECT @JOB_NAME =NAME FROM DELETED
+    END
+    ELSE
+	BEGIN
+        IF NOT EXISTS(SELECT * FROM INSERTED) RETURN; -- NOTHING UPDATED OR INSERTED.
+		END
+
+
+DECLARE DB_CURSOR CURSOR FOR 
+		SELECT NAME FROM SYS.COLUMNS WHERE OBJECT_ID =  OBJECT_ID('SYSJOBS') and name not in('date_modified','version_number')
+	OPEN DB_CURSOR  
+	FETCH NEXT FROM DB_CURSOR INTO @COLUMN  
+		WHILE @@FETCH_STATUS = 0  
+		BEGIN  
+				SET @CMD = 		'DECLARE @AFFECTEDCOL VARCHAR (100)
+				IF ((SELECT  '+@COLUMN +' FROM #DELETED  ) <> (SELECT '+@COLUMN+' FROM #INSERTED))
+				BEGIN
+				SELECT '''+@COLUMN+'''
+		
+				END'
+		
+		
+				INSERT INTO @COLAFF  EXEC (@CMD)
+				--PRINT @CMD
+
+			  FETCH NEXT FROM DB_CURSOR INTO @COLUMN 
+		END 
+
+	CLOSE DB_CURSOR  
+	DEALLOCATE DB_CURSOR 
+
+
+
+SET @AFFECTED_COL = (SELECT   DISTINCT
+							SUBSTRING(
+										(
+											SELECT ','+COLUMNS  
+											FROM @COLAFF   
+            
+											FOR XML PATH ('')
+										), 2, 1000) [COLUMNS]
+					 FROM @COLAFF)
+ 
+INSERT INTO DBO.DELJOB (LOGINNAME, JOB_NAME, DATE_TIME, ACTION, AFFECTED_COL) 
+			VALUES (ORIGINAL_LOGIN(), @JOB_NAME, GETDATE() ,@ACTION, @AFFECTED_COL) 
+
+DROP TABLE #DELETED
+DROP TABLE #INSERTED
+
+END
+GO
+
+ALTER TABLE [dbo].[sysjobs] ENABLE TRIGGER [TRIG_SYSJOBS_INSERT_UPDATE_DELETE]
+GO
+
+
+USE [msdb]
+GO
+
+/****** Object:  Trigger [dbo].[TRIG_SYSJOBSTEPS_INSERT_UPDATE_DELETE]    Script Date: 17-09-2020 14:10:52 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE    TRIGGER [dbo].[TRIG_SYSJOBSTEPS_INSERT_UPDATE_DELETE]
+ON [dbo].[sysjobsteps]
+FOR INSERT, UPDATE, DELETE
+AS 
+BEGIN
+    SET NOCOUNT ON;
+
+IF OBJECT_ID(N'TEMPDB..#DELETED') IS NOT NULL
+BEGIN
+DROP TABLE #DELETED
+END
+
+CREATE TABLE #deleted(
+	[job_id] [uniqueidentifier] NOT NULL,
+	[step_id] [int] NOT NULL,
+	[step_name] [sysname] NOT NULL,
+	[subsystem] [nvarchar](40) NOT NULL,
+	[command] [nvarchar](max) NULL,
+	[flags] [int] NOT NULL,
+	[additional_parameters] [nvarchar](max) NULL,
+	[cmdexec_success_code] [int] NOT NULL,
+	[on_success_action] [tinyint] NOT NULL,
+	[on_success_step_id] [int] NOT NULL,
+	[on_fail_action] [tinyint] NOT NULL,
+	[on_fail_step_id] [int] NOT NULL,
+	[server] [sysname] NULL,
+	[database_name] [sysname] NULL,
+	[database_user_name] [sysname] NULL,
+	[retry_attempts] [int] NOT NULL,
+	[retry_interval] [int] NOT NULL,
+	[os_run_priority] [int] NOT NULL,
+	[output_file_name] [nvarchar](200) NULL,
+	[last_run_outcome] [int] NOT NULL,
+	[last_run_duration] [int] NOT NULL,
+	[last_run_retries] [int] NOT NULL,
+	[last_run_date] [int] NOT NULL,
+	[last_run_time] [int] NOT NULL,
+	[proxy_id] [int] NULL,
+	[step_uid] [uniqueidentifier] NULL
+) 
+
+IF OBJECT_ID(N'TEMPDB..#INSERTED') IS NOT NULL
+BEGIN
+DROP TABLE #INSERTED
+END
+
+CREATE TABLE #inserted(
+	[job_id] [uniqueidentifier] NOT NULL,
+	[step_id] [int] NOT NULL,
+	[step_name] [sysname] NOT NULL,
+	[subsystem] [nvarchar](40) NOT NULL,
+	[command] [nvarchar](max) NULL,
+	[flags] [int] NOT NULL,
+	[additional_parameters] [nvarchar](max) NULL,
+	[cmdexec_success_code] [int] NOT NULL,
+	[on_success_action] [tinyint] NOT NULL,
+	[on_success_step_id] [int] NOT NULL,
+	[on_fail_action] [tinyint] NOT NULL,
+	[on_fail_step_id] [int] NOT NULL,
+	[server] [sysname] NULL,
+	[database_name] [sysname] NULL,
+	[database_user_name] [sysname] NULL,
+	[retry_attempts] [int] NOT NULL,
+	[retry_interval] [int] NOT NULL,
+	[os_run_priority] [int] NOT NULL,
+	[output_file_name] [nvarchar](200) NULL,
+	[last_run_outcome] [int] NOT NULL,
+	[last_run_duration] [int] NOT NULL,
+	[last_run_retries] [int] NOT NULL,
+	[last_run_date] [int] NOT NULL,
+	[last_run_time] [int] NOT NULL,
+	[proxy_id] [int] NULL,
+	[step_uid] [uniqueidentifier] NULL
+)
+
+	INSERT INTO #DELETED SELECT * FROM DELETED
+	INSERT INTO #INSERTED SELECT * FROM INSERTED
+
+DECLARE @ACTION AS CHAR(1);
+DECLARE @JOBID UNIQUEIDENTIFIER
+DECLARE @JOBSTEP_NAME VARCHAR(1024);
+DECLARE @AFFECTED_COL NVARCHAR(100);
+DECLARE @COLUMN VARCHAR(100)
+DECLARE @CMD NVARCHAR (500)
+DECLARE @COLAFF TABLE (COLUMNS NVARCHAR(200))
+
+    SET @ACTION = 'I'; -- SET ACTION TO INSERT BY DEFAULT.
+	SELECT @JOBSTEP_NAME =step_name FROM INSERTED
+	SELECT @JOBID = JOB_ID FROM INSERTED
+    IF EXISTS(SELECT * FROM DELETED)
+    BEGIN
+        SET @ACTION = 
+            CASE
+                WHEN EXISTS(SELECT * FROM INSERTED) THEN 'U' -- SET ACTION TO UPDATED.
+                ELSE 'D' -- SET ACTION TO DELETED.       
+            END
+		SELECT @JOBSTEP_NAME =step_name FROM DELETED
+		SELECT @JOBID = JOB_ID FROM DELETED
+    END
+    ELSE
+	BEGIN
+        IF NOT EXISTS(SELECT * FROM INSERTED) RETURN; -- NOTHING UPDATED OR INSERTED.
+		END
+
+
+DECLARE DB_CURSOR CURSOR FOR 
+		SELECT NAME FROM SYS.COLUMNS WHERE OBJECT_ID =  OBJECT_ID('SYSJOBSTEPS') 
+	OPEN DB_CURSOR  
+	FETCH NEXT FROM DB_CURSOR INTO @COLUMN  
+		WHILE @@FETCH_STATUS = 0  
+		BEGIN  
+				SET @CMD = 		'DECLARE @AFFECTEDCOL VARCHAR (100)
+				IF ((SELECT  '+@COLUMN +' FROM #DELETED  ) <> (SELECT '+@COLUMN+' FROM #INSERTED))
+				BEGIN
+				SELECT '''+@COLUMN+'''
+		
+				END'
+		
+		
+				INSERT INTO @COLAFF  EXEC (@CMD)
+				--PRINT @CMD
+
+			  FETCH NEXT FROM DB_CURSOR INTO @COLUMN 
+		END 
+
+	CLOSE DB_CURSOR  
+	DEALLOCATE DB_CURSOR 
+
+
+
+SET @AFFECTED_COL = (SELECT   DISTINCT
+							SUBSTRING(
+										(
+											SELECT ','+COLUMNS  
+											FROM @COLAFF   
+            
+											FOR XML PATH ('')
+										), 2, 1000) [COLUMNS]
+					 FROM @COLAFF)
+ 
+INSERT INTO DBO.DELJOB (LOGINNAME, JOB_NAME, DATE_TIME, ACTION, AFFECTED_COL) 
+			VALUES (ORIGINAL_LOGIN(), DBO.JOB_NAME(@JOBID)+': '+@JOBSTEP_NAME, GETDATE() ,@ACTION, @AFFECTED_COL) 
+
+DROP TABLE #DELETED
+DROP TABLE #INSERTED
+
+END
+GO
+
+ALTER TABLE [dbo].[sysjobsteps] ENABLE TRIGGER [TRIG_SYSJOBSTEPS_INSERT_UPDATE_DELETE]
+GO
+
+
+USE [msdb]
+GO
+
+/****** Object:  Trigger [dbo].[TRIG_SYSSchedules_INSERT_UPDATE_DELETE]    Script Date: 17-09-2020 14:11:13 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+
+
+CREATE    TRIGGER [dbo].[TRIG_SYSSchedules_INSERT_UPDATE_DELETE]
+ON [dbo].[sysschedules] 
+FOR INSERT, UPDATE, DELETE
+AS 
+BEGIN
+    SET NOCOUNT ON;
+
+IF OBJECT_ID(N'TEMPDB..#DELETED') IS NOT NULL
+BEGIN
+DROP TABLE #DELETED
+END
+
+CREATE TABLE [dbo].[#DELETED](
+	[schedule_id] [int]  NOT NULL,
+	[schedule_uid] [uniqueidentifier] NOT NULL,
+	[originating_server_id] [int] NOT NULL,
+	[name] [sysname] NOT NULL,
+	[owner_sid] [varbinary](85) NOT NULL,
+	[enabled] [int] NOT NULL,
+	[freq_type] [int] NOT NULL,
+	[freq_interval] [int] NOT NULL,
+	[freq_subday_type] [int] NOT NULL,
+	[freq_subday_interval] [int] NOT NULL,
+	[freq_relative_interval] [int] NOT NULL,
+	[freq_recurrence_factor] [int] NOT NULL,
+	[active_start_date] [int] NOT NULL,
+	[active_end_date] [int] NOT NULL,
+	[active_start_time] [int] NOT NULL,
+	[active_end_time] [int] NOT NULL,
+	[date_created] [datetime] NOT NULL,
+	[date_modified] [datetime] NOT NULL,
+	[version_number] [int] NOT NULL
+)
+
+IF OBJECT_ID(N'TEMPDB..#INSERTED') IS NOT NULL
+BEGIN
+DROP TABLE #INSERTED
+END
+
+CREATE TABLE [dbo].[#INSERTED](
+	[schedule_id] [int]  NOT NULL,
+	[schedule_uid] [uniqueidentifier] NOT NULL,
+	[originating_server_id] [int] NOT NULL,
+	[name] [sysname] NOT NULL,
+	[owner_sid] [varbinary](85) NOT NULL,
+	[enabled] [int] NOT NULL,
+	[freq_type] [int] NOT NULL,
+	[freq_interval] [int] NOT NULL,
+	[freq_subday_type] [int] NOT NULL,
+	[freq_subday_interval] [int] NOT NULL,
+	[freq_relative_interval] [int] NOT NULL,
+	[freq_recurrence_factor] [int] NOT NULL,
+	[active_start_date] [int] NOT NULL,
+	[active_end_date] [int] NOT NULL,
+	[active_start_time] [int] NOT NULL,
+	[active_end_time] [int] NOT NULL,
+	[date_created] [datetime] NOT NULL,
+	[date_modified] [datetime] NOT NULL,
+	[version_number] [int] NOT NULL
+)
+
+	INSERT INTO #DELETED SELECT * FROM DELETED
+	INSERT INTO #INSERTED SELECT * FROM INSERTED
+
+DECLARE @ACTION AS CHAR(1);
+DECLARE @JOB_NAME VARCHAR(1024);
+DECLARE @SCHEDID INT
+DECLARE @AFFECTED_COL NVARCHAR(100);
+DECLARE @COLUMN VARCHAR(100)
+DECLARE @CMD NVARCHAR (500)
+DECLARE @COLAFF TABLE (COLUMNS NVARCHAR(200))
+
+    SET @ACTION = 'I'; -- SET ACTION TO INSERT BY DEFAULT.
+	SELECT @SCHEDID = schedule_id FROM sysschedules
+	SELECT @JOB_NAME = MSDB.dbo.getjobnamefromschedid(@SCHEDID) FROM INSERTED
+    IF EXISTS(SELECT * FROM DELETED)
+    BEGIN
+        SET @ACTION = 
+            CASE
+                WHEN EXISTS(SELECT * FROM INSERTED) THEN 'U' -- SET ACTION TO UPDATED.
+                ELSE 'D' -- SET ACTION TO DELETED.       
+            END
+		SELECT @JOB_NAME =MSDB.dbo.getjobnamefromschedid(@SCHEDID)  FROM DELETED
+    END
+    ELSE
+	BEGIN
+        IF NOT EXISTS(SELECT * FROM INSERTED) RETURN; -- NOTHING UPDATED OR INSERTED.
+		END
+
+
+DECLARE DB_CURSOR CURSOR FOR 
+		SELECT NAME FROM SYS.COLUMNS WHERE OBJECT_ID =  OBJECT_ID('SYSSCHEDULES') 
+	OPEN DB_CURSOR  
+	FETCH NEXT FROM DB_CURSOR INTO @COLUMN  
+		WHILE @@FETCH_STATUS = 0  
+		BEGIN  
+				SET @CMD = 		'DECLARE @AFFECTEDCOL VARCHAR (100)
+				IF ((SELECT  '+@COLUMN +' FROM #DELETED  ) <> (SELECT '+@COLUMN+' FROM #INSERTED))
+				BEGIN
+				SELECT '''+@COLUMN+'''
+		
+				END'
+		
+		
+				INSERT INTO @COLAFF  EXEC (@CMD)
+				--PRINT @CMD
+
+			  FETCH NEXT FROM DB_CURSOR INTO @COLUMN 
+		END 
+
+	CLOSE DB_CURSOR  
+	DEALLOCATE DB_CURSOR 
+
+
+
+SET @AFFECTED_COL = (SELECT   DISTINCT
+							SUBSTRING(
+										(
+											SELECT ','+COLUMNS  
+											FROM @COLAFF   
+            
+											FOR XML PATH ('')
+										), 2, 1000) [COLUMNS]
+					 FROM @COLAFF)
+ 
+INSERT INTO DBO.DELJOB (LOGINNAME, JOB_NAME, DATE_TIME, ACTION, AFFECTED_COL) 
+			VALUES (ORIGINAL_LOGIN(), +'Schedule for '+ @JOB_NAME, GETDATE() ,@ACTION, @AFFECTED_COL) 
+
+DROP TABLE #DELETED
+DROP TABLE #INSERTED
+
+END
+GO
+
+ALTER TABLE [dbo].[sysschedules] ENABLE TRIGGER [TRIG_SYSSchedules_INSERT_UPDATE_DELETE]
+GO
+
+
