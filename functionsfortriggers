@@ -1,0 +1,45 @@
+USE [msdb]
+GO
+
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+create   function [dbo].[job_name] (@job_id uniqueidentifier)
+returns nvarchar(200)
+with execute as caller
+as
+
+begin
+		declare @job_name nvarchar(200)
+		select @job_name = name from msdb..sysjobs where job_id = @job_id
+	return (select @job_name)
+end
+GO
+
+
+USE [msdb]
+GO
+
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+create function [dbo].[getjobnamefromschedid] (@schedid int)
+
+returns nvarchar(200)
+
+as
+
+begin
+		declare @jobid uniqueidentifier
+		select @jobid = job_id from sysjobschedules a join sysschedules b on a.schedule_id = b.schedule_id where b.schedule_id = 12
+	return (select dbo.job_name(@jobid))
+end
+GO
+
+
