@@ -1,5 +1,71 @@
 new role/responsibilies -
 
+I have below script - 
+
+# Load the necessary assembly for GUI creation
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# Create the form
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'Input Form'
+$form.Size = New-Object System.Drawing.Size(400,300) # Adjusted for additional control
+$form.StartPosition = 'CenterScreen'
+
+# Create the label
+$label = New-Object System.Windows.Forms.Label
+$label.Text = 'Enter your TSQL Script:'
+$label.Location = New-Object System.Drawing.Point(10,20)
+$label.Size = New-Object System.Drawing.Size(280,20)
+$form.Controls.Add($label)
+
+# Create the text box for input
+$textbox = New-Object System.Windows.Forms.TextBox
+$textbox.Location = New-Object System.Drawing.Point(10,40)
+$textbox.Size = New-Object System.Drawing.Size(360,20)
+$textbox.Multiline = $true
+$textbox.Height = 100
+$textbox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical # Add vertical scroll bar
+$form.Controls.Add($textbox)
+
+# Create the Browse button for file selection
+$browseButton = New-Object System.Windows.Forms.Button
+$browseButton.Location = New-Object System.Drawing.Point(295,150)
+$browseButton.Size = New-Object System.Drawing.Size(75,23)
+$browseButton.Text = 'Browse'
+$form.Controls.Add($browseButton)
+
+$browseButton.Add_Click({
+    $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+    $openFileDialog.initialDirectory = [System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::Desktop)
+    $openFileDialog.filter = 'Text files (*.txt)|*.txt|All files (*.*)|*.*'
+    $openFileDialog.ShowDialog() | Out-Null
+    if (Test-Path $openFileDialog.FileName)
+    {
+        $textbox.Text = Get-Content $openFileDialog.FileName -Raw
+    }
+})
+
+# Create the OK button
+$okButton = New-Object System.Windows.Forms.Button
+$okButton.Location = New-Object System.Drawing.Point(10,150)
+$okButton.Size = New-Object System.Drawing.Size(75,23)
+$okButton.Text = 'OK'
+$okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$form.AcceptButton = $okButton
+$form.Controls.Add($okButton)
+
+# Show the form as a dialog and get the result
+$result = $form.ShowDialog()
+
+if ($result -eq [System.Windows.Forms.DialogResult]::OK)
+{
+    $quote = "'"
+    $input = $quote + $textbox.Text.replace("'","''") + $quote
+    $input
+}
+
+
 
 Team Management: As a Tower Lead, the role involves managing and leading a team of professionals within a specific domain. Responsibilities include task allocation, setting performance expectations, and providing regular feedback and coaching to team members.
 
