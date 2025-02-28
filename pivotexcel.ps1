@@ -1,125 +1,114 @@
 ﻿# Define variables
-$SourceFile = "D:\Desktop\Book1.xlsx"  # Input Excel file
-$SheetNames = @("Sheet1", "Sheet2")    # Sheets to extract
-$NewFile = "D:\Desktop\Output.xlsx"    # Output Excel file
-$MergedSheetName = "MergedSheet"       # Sheet for merged data
-$PivotSheetName = "PivotTableSheet"    # Pivot Table sheet
-$TableName = "MergedDataTable"         # Table name for Pivot Table
+$SourceFile = "D:\Desktop\Azure_Virtual_Machine_Inventory.xlsx"
+$NewFile = "D:\Desktop\Output.xlsx"
 
-# Define filtering condition
-$FilterColumn = "col8"  # Column to filter
-$FilterValue = @("row8", "row6")  # Values to keep
-
-# Ensure ImportExcel module is installed
-if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-    Write-Host "ERROR: The ImportExcel module is not installed. Please install it using:"
-    Write-Host "`n Install-Module -Name ImportExcel -Scope CurrentUser -Force"
-    exit
+# Clean up existing files
+if (Test-Path $NewFile) {
+    Remove-Item -Path $NewFile -Force
 }
 
-# Check if source file exists
-if (-Not (Test-Path $SourceFile)) {
-    Write-Host "ERROR: Source file not found: $SourceFile"
-    exit
-}
+# Sheet names
+$SummarySheet = "Summary"
+$BillableSheet = "Billable VMs"
+$InScopeSheet = "InScope VMs"
+$AllVMsSheet = "All VMs"
 
-# Initialize an empty array to store filtered data
-$AllFilteredData = @()
-
-foreach ($SheetName in $SheetNames) {
-    try {
-        # Import the sheet
-        $SheetData = Import-Excel -Path $SourceFile -WorksheetName $SheetName -ErrorAction Stop
-
-        # Check if data exists
-        if ($null -eq $SheetData -or $SheetData.Count -eq 0) {
-            Write-Host "WARNING: Sheet '$SheetName' is empty."
-            continue
-        }
-
-        # Extract column names
-        $ActualColumns = $SheetData[0].PSObject.Properties.Name
-        Write-Host "Available columns in '$SheetName': $($ActualColumns -join ', ')"
-
-        # Ensure the filter column exists
-        if ($ActualColumns -notcontains $FilterColumn) {
-            Write-Host "ERROR: Column '$FilterColumn' not found in '$SheetName'. Available columns: $($ActualColumns -join ', ')"
-            continue
-        }
-
-        # Apply filtering and Debug print
-        $FilteredData = $SheetData | Where-Object { $_.$FilterColumn -in $FilterValue }
-
-        # Debug: Check how many rows are filtered
-        Write-Host "DEBUG: Filtered $($FilteredData.Count) rows from '$SheetName'"
-
-        # Check if filtered data is empty
-        if ($FilteredData.Count -eq 0) {
-            Write-Host "WARNING: No matching records found in '$SheetName' for '$FilterColumn'."
-            continue
-        }
-
-        # Convert filtered data to text format to prevent formatting issues
-        $FilteredData = $FilteredData | ForEach-Object {
-            $_.PSObject.Properties | ForEach-Object { $_.Value = $_.Value -as [string] }
-            $_
-        }
-
-        # Add to combined dataset
-        $AllFilteredData += $FilteredData
-
-    } catch {
-        Write-Host "ERROR: Unable to read '$SheetName'. Ensure the file exists and the sheet name is correct. Error: $_"
-    }
-}
-
-# Debug: Check count of filtered data before exporting
-Write-Host "DEBUG: Total filtered records to export: $($AllFilteredData.Count)"
-
-# Stop if no data found
-if ($AllFilteredData.Count -eq 0) {
-    Write-Host "ERROR: No matching data found. Stopping execution."
-    exit
-}
-
-# Step 1: Export filtered data to Excel as a named table
+# Import original data
 try {
-    Write-Host "INFO: Writing filtered data to '$MergedSheetName'..."
-    $AllFilteredData | Export-Excel -Path $NewFile -WorksheetName $MergedSheetName -AutoSize -TableName $TableName -ClearSheet -ErrorAction Stop
-    Write-Host "SUCCESS: Filtered data saved in '$MergedSheetName'"
+    $AllData = Import-Excel -Path $SourceFile
+    Write-Host "Successfully imported data from source file"
 } catch {
-    Write-Host "ERROR: Unable to write to '$NewFile'. Ensure it is not open. Error: $_"
+    Write-Host "ERROR: Unable to read source file. Error: $_"
     exit
 }
 
-# Step 2: Create Pivot Table Sheet
-try {
-    Export-Excel -Path $NewFile -WorksheetName $PivotSheetName -AutoSize -ClearSheet
-    Write-Host "SUCCESS: Created Pivot Table Sheet '$PivotSheetName'"
-} catch {
-    Write-Host "ERROR: Unable to create pivot sheet. Error: $_"
-    exit
-}
+# Filter data for each sheet
+$BillableVMs = $AllData | Where-Object { $_.Billable -eq "Yes" }
+$InScopeVMs = $AllData | Where-Object { $_.InScope -eq "Yes" }
 
-# Step 3: Create Pivot Table
 try {
-    # Define Pivot Table parameters
+    # Create Summary sheet first (empty for now)
+    @{} | Export-Excel -Path $NewFile -WorksheetName $SummarySheet -ClearSheet
+
+    # Create Billable VMs sheet with count
+    $BillableCount = $BillableVMs.Count
+    Write-Host "Creating Billable VMs sheet with $BillableCount rows..."
+    $BillableVMs | Export-Excel -Path $NewFile -WorksheetName "$BillableSheet - $BillableCount" `
+        -AutoSize -TableName "BillableTable" -TableStyle Medium2 -Append
+
+    # Create InScope VMs sheet with count
+    $InScopeCount = $InScopeVMs.Count
+    Write-Host "Creating InScope VMs sheet with $InScopeCount rows..."
+    $InScopeVMs | Export-Excel -Path $NewFile -WorksheetName "$InScopeSheet - $InScopeCount" `
+        -AutoSize -TableName "InScopeTable" -TableStyle Medium2 -Append
+
+    # Create All VMs sheet with count
+    $AllVMsCount = $AllData.Count
+    Write-Host "Creating All VMs sheet with $AllVMsCount rows..."
+    $AllData | Export-Excel -Path $NewFile -WorksheetName "$AllVMsSheet - $AllVMsCount" `
+        -AutoSize -TableName "AllVMsTable" -TableStyle Medium2 -Append
+
+    # Update sheet name variables to match new names with counts
+    $BillableSheet = "$BillableSheet - $BillableCount"
+    $InScopeSheet = "$InScopeSheet - $InScopeCount"
+    $AllVMsSheet = "$AllVMsSheet - $AllVMsCount"
+
+    # Now create pivot table
     $ExcelPackage = Open-ExcelPackage -Path $NewFile
-    $ws = $ExcelPackage.Workbook.Worksheets[$PivotSheetName]
-
+    $ws = $ExcelPackage.Workbook.Worksheets[$SummarySheet]
+    
+    # Clear any existing content in the Summary sheet
+    $ws.Cells.Clear()
+    
     $PivotParams = @{
         PivotTableName = "PivotTable1"
         Address = $ws.Cells["A1"]
-        SourceWorksheet = $ExcelPackage.Workbook.Worksheets[$MergedSheetName]
-        PivotRows = "col8"
-        PivotData = @{"col6" = "Count"}
+        SourceWorksheet = $ExcelPackage.Workbook.Worksheets[$AllVMsSheet]
+        PivotRows = @("InScope","Status")
+        PivotColumn = "OS Type"
+        PivotData = @{"VM Name" = "Count"}
+        PivotDataToColumn = $true
+        NoTotalsInPivot = $false
+        PivotTotals = "Rows"
+        PivotNumberFormat = "1"
+        PivotTableStyle = "Light16"
     }
 
     # Generate Pivot Table
-    Add-PivotTable @PivotParams
+    Add-PivotTable @PivotParams -ExcelPackage $ExcelPackage
+    
+    # Format Summary sheet
+    $ws.View.ShowGridLines = $false
+    $ws.Column(1).Width = 20
+    
+    # Additional formatting for better readability
+    $ws.Cells["A1:Z1"].Style.Font.Bold = $true
+    $ws.Cells.Style.HorizontalAlignment = 'Center'
+    $ws.Column(1).Style.HorizontalAlignment = 'Left'
+
+    # Rearrange sheets in desired order
+    $ws_Summary = $ExcelPackage.Workbook.Worksheets[$SummarySheet]
+    $ws_Billable = $ExcelPackage.Workbook.Worksheets[$BillableSheet]
+    $ws_InScope = $ExcelPackage.Workbook.Worksheets[$InScopeSheet]
+
+    # Move Summary to position 1
+    if ($ws_Summary.Index -ne 1) {
+        $ws_Summary.MoveBefore(1)
+    }
+
+    # Move Billable VM to position 2
+    if ($ws_Billable.Index -ne 2) {
+        $ws_Billable.MoveBefore(2)
+    }
+
+    # Save and close package
     Close-ExcelPackage $ExcelPackage -Show
 
-    Write-Host "SUCCESS: Pivot Table created in '$PivotSheetName'"
+    Write-Host "SUCCESS: Excel file created with all sheets in correct order"
 } catch {
-    Write-Host "ERROR: Unable to create Pivot Table. Error: $_"
+    Write-Host "ERROR: Unable to create workbook. Error: $_"
+    if ($ExcelPackage) {
+        Close-ExcelPackage $ExcelPackage -NoSave
+    }
+    exit
 }
