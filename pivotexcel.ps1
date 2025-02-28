@@ -2,9 +2,44 @@
 $SourceFile = "D:\Desktop\Azure_Virtual_Machine_Inventory.xlsx"
 $NewFile = "D:\Desktop\Output.xlsx"
 
-# Clean up existing files
+# Define sheets to combine
+$SheetsToInclude = @(
+    "Azure_Virtual_Machine_Inventory",
+    "Sheet1",   # Add your sheet names here
+    "Sheet2"
+)
+
+# Clean up existing output file
 if (Test-Path $NewFile) {
     Remove-Item -Path $NewFile -Force
+}
+
+# Combine specified sheets into one
+try {
+    $CombinedData = @()
+    
+    foreach ($SheetName in $SheetsToInclude) {
+        Write-Host "Importing data from sheet: $SheetName"
+        try {
+            $Data = Import-Excel -Path $SourceFile -WorksheetName $SheetName
+            $CombinedData += $Data
+        } catch {
+            Write-Host "WARNING: Could not import sheet '$SheetName'. Error: $_"
+        }
+    }
+    
+    # Export combined data to the new file
+    if ($CombinedData.Count -gt 0) {
+        $CombinedData | Export-Excel -Path $NewFile -WorksheetName "Combined_Data" -AutoSize -TableStyle Medium2
+        Write-Host "Successfully created Combined_Data sheet in new file"
+        $AllData = $CombinedData  # Use combined data for further processing
+    } else {
+        Write-Host "ERROR: No data found in specified sheets"
+        exit
+    }
+} catch {
+    Write-Host "ERROR: Failed to combine Excel sheets. Error: $_"
+    exit
 }
 
 # Sheet names
@@ -12,15 +47,6 @@ $SummarySheet = "Summary"
 $BillableSheet = "Billable VMs"
 $InScopeSheet = "InScope VMs"
 $AllVMsSheet = "All VMs"
-
-# Import original data
-try {
-    $AllData = Import-Excel -Path $SourceFile
-    Write-Host "Successfully imported data from source file"
-} catch {
-    Write-Host "ERROR: Unable to read source file. Error: $_"
-    exit
-}
 
 # Filter data for each sheet
 $BillableVMs = $AllData | Where-Object { $_.Billable -eq "Yes" }
@@ -63,21 +89,24 @@ try {
     $PivotParams = @{
         PivotTableName = "PivotTable1"
         Address = $ws.Cells["A1"]
-        SourceWorksheet = $ExcelPackage.Workbook.Worksheets[$AllVMsSheet]
-        PivotRows = @("InScope","Status")
+        SourceWorksheet = $ExcelPackage.Workbook.Worksheets[$InScopeSheet]
+        PivotRows = "Status"
         PivotColumn = "OS Type"
         PivotData = @{"VM Name" = "Count"}
         PivotDataToColumn = $true
         NoTotalsInPivot = $false
-        PivotTotals = "Rows"
-        PivotNumberFormat = "1"
+        PivotTotals = "Both"
+        PivotNumberFormat = "0"
         PivotTableStyle = "Light16"
     }
 
     # Generate Pivot Table
     Add-PivotTable @PivotParams -ExcelPackage $ExcelPackage
     
-    # Format Summary sheet
+    # Additional pivot table formatting
+    $pivotTable = $ws.PivotTables[0]
+    
+    # Format the pivot table
     $ws.View.ShowGridLines = $false
     $ws.Column(1).Width = 20
     
@@ -87,24 +116,35 @@ try {
     $ws.Column(1).Style.HorizontalAlignment = 'Left'
 
     # Rearrange sheets in desired order
-    $ws_Summary = $ExcelPackage.Workbook.Worksheets[$SummarySheet]
-    $ws_Billable = $ExcelPackage.Workbook.Worksheets[$BillableSheet]
-    $ws_InScope = $ExcelPackage.Workbook.Worksheets[$InScopeSheet]
+    try {
+        # Move Summary to position 1
+        $ExcelPackage.Workbook.Worksheets.MoveToStart($SummarySheet)
+        
+        # Move other sheets in order
+        $ExcelPackage.Workbook.Worksheets.MoveBefore($BillableSheet, $InScopeSheet)
+        $ExcelPackage.Workbook.Worksheets.MoveBefore($InScopeSheet, $AllVMsSheet)
 
-    # Move Summary to position 1
-    if ($ws_Summary.Index -ne 1) {
-        $ws_Summary.MoveBefore(1)
+        Write-Host "Successfully reordered worksheets"
+    } catch {
+        Write-Host "WARNING: Unable to reorder worksheets. Error: $_"
+        # Continue execution even if reordering fails
     }
 
-    # Move Billable VM to position 2
-    if ($ws_Billable.Index -ne 2) {
-        $ws_Billable.MoveBefore(2)
+    # Remove the Combined_Data sheet since it's no longer needed
+    try {
+        $CombinedSheet = $ExcelPackage.Workbook.Worksheets["Combined_Data"]
+        if ($CombinedSheet) {
+            $ExcelPackage.Workbook.Worksheets.Delete("Combined_Data")
+            Write-Host "Removed temporary Combined_Data sheet"
+        }
+    } catch {
+        Write-Host "WARNING: Unable to remove Combined_Data sheet. Error: $_"
     }
 
     # Save and close package
     Close-ExcelPackage $ExcelPackage -Show
 
-    Write-Host "SUCCESS: Excel file created with all sheets in correct order"
+    Write-Host "SUCCESS: Excel file created with all sheets"
 } catch {
     Write-Host "ERROR: Unable to create workbook. Error: $_"
     if ($ExcelPackage) {
