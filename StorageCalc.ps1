@@ -7,6 +7,9 @@ function Write-Log {
     Write-Host "$(Get-Date -Format 'HH:mm:ss'): $Message"
 }
 
+$SheetsToInclude = @("Sheet1","sheet2")  # Specify your sheet names here
+$CombinedData = @()
+
 try {
     Write-Log "Starting script..."
     
@@ -21,7 +24,59 @@ try {
     $diskPath = "D:\Desktop\Azure_Disk_Report_Updated.xlsx"
     Write-Log "Opening disk report: $diskPath"
     $diskWorkbook = $excel.Workbooks.Open($diskPath)
-    $diskSheet = $diskWorkbook.Worksheets.Item(1)
+    
+    # Combine data from specified sheets
+    foreach ($SheetName in $SheetsToInclude) {
+        Write-Log "Processing sheet: $SheetName"
+        try {
+            $sheet = $diskWorkbook.Worksheets.Item($SheetName)
+            $usedRange = $sheet.UsedRange
+            $lastRow = $usedRange.Rows.Count
+            $lastCol = $usedRange.Columns.Count
+            
+            # Create array of column headers
+            $headers = @()
+            for ($col = 1; $col -le $lastCol; $col++) {
+                $headers += $sheet.Cells(1, $col).Text
+            }
+            
+            # Get data from each row
+            for ($row = 2; $row -le $lastRow; $row++) {
+                $rowData = [ordered]@{}
+                for ($col = 1; $col -le $lastCol; $col++) {
+                    $rowData[$headers[$col-1]] = $sheet.Cells($row, $col).Text
+                }
+                $CombinedData += [PSCustomObject]$rowData
+            }
+            Write-Log "Added $($lastRow-1) rows from $SheetName"
+        } catch {
+            Write-Log "WARNING: Could not process sheet '$SheetName'. Error: $_"
+        }
+    }
+    
+    Write-Log "Total combined records: $($CombinedData.Count)"
+    
+    # Create new worksheet for combined data
+    $newSheet = $diskWorkbook.Worksheets.Add()
+    $newSheet.Name = "Combined_Data"
+    
+    # Write headers
+    if ($CombinedData.Count -gt 0) {
+        $headers = $CombinedData[0].PSObject.Properties.Name
+        for ($col = 0; $col -lt $headers.Count; $col++) {
+            $newSheet.Cells(1, $col + 1) = $headers[$col]
+        }
+        
+        # Write data
+        for ($row = 0; $row -lt $CombinedData.Count; $row++) {
+            for ($col = 0; $col -lt $headers.Count; $col++) {
+                $newSheet.Cells($row + 2, $col + 1) = $CombinedData[$row].$($headers[$col])
+            }
+        }
+    }
+    
+    # Continue with your existing code using $newSheet instead of $diskSheet
+    $diskSheet = $newSheet
     
     # Create temporary sheet for inventory data
     Write-Log "Creating temporary inventory sheet..."
@@ -137,11 +192,15 @@ try {
     
     # Clean up extra sheets
     Write-Log "Cleaning up extra sheets..."
-    $diskWorkbook.Sheets.Item("TempInventory").Delete()
-    $diskWorkbook.Sheets.Item("Sheet1").Delete()
+    foreach ($sheet in $diskWorkbook.Sheets) {
+        if ($sheet.Name -ne "Report_With_Lookup") {  # Keep only the final report sheet
+            Write-Log "Removing sheet: $($sheet.Name)"
+            $sheet.Delete()
+        }
+    }
     
     # Move the report sheet to first position
-    $newSheet.Move($diskWorkbook.Sheets.Item(1))
+    $diskWorkbook.Sheets.Item("Report_With_Lookup").Move($diskWorkbook.Sheets.Item(1))
     
     # Save as new file
     $newPath = "D:\Desktop\Azure_Disk_Report_Updated_with_Totals.xlsx"
