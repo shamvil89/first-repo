@@ -1,0 +1,233 @@
+# Check and install required modules if needed
+$modules = @('Az.Accounts', 'Az.Compute', 'Az.Network')
+foreach ($module in $modules) {
+    if (!(Get-Module -ListAvailable -Name $module)) {
+        Write-Output "Installing $module module..."
+        Install-Module -Name $module -Force -AllowClobber -Scope CurrentUser
+    }
+    Import-Module $module -Force
+}
+
+# Import required Azure modules
+Import-Module Az.Accounts
+Import-Module Az.Compute
+Import-Module Az.Network
+
+#Login
+Connect-AzAccount -Identity
+Select-AzSubscription -SubscriptionId '74584caa-dc5f-403e-a0a2-6b4be5459f1c'
+      
+
+# Azure VM details
+$resourceGroupName = "test"
+$vmName = "testingVM"
+$subscriptionId = "74584caa-dc5f-403e-a0a2-6b4be5459f1c"
+
+# Function to check if it's a weekend
+function Get-WeekendStatus {
+    $dayOfWeek = (Get-Date).DayOfWeek
+    return ($dayOfWeek -eq "Saturday" -or $dayOfWeek -eq "Sunday")
+}
+
+# Function to convert IST to UTC
+function Convert-ISTtoUTC {
+    param (
+        [DateTime]$istTime
+    )
+    return $istTime.AddHours(-5.5) # IST is UTC+5:30
+}
+
+# Function to get VM OS type
+function Get-VMOSType {
+    param (
+        [string]$resourceGroupName,
+        [string]$vmName
+    )
+    
+    $vm = Get-AzVM -ResourceGroupName $resourceGroupName -Name $vmName
+    return $vm.StorageProfile.OsDisk.OsType
+}
+
+# Function to stop SQL Server services
+function Stop-SQLServices {
+    param (
+        [string]$vmName,
+        [string]$osType
+    )
+    
+    Write-Output "Stopping SQL Services on $osType..." 
+    
+    if ($osType -eq "Windows") {
+        $command = {
+            $services = Get-Service | Where-Object {$_.DisplayName -like "*SQL Server*" -and $_.Status -eq "Running"}
+            foreach ($service in $services) {
+                Stop-Service -Name $service.Name -Force
+            }
+        }
+        
+        Invoke-AzVMRunCommand -ResourceGroupName $resourceGroupName -VMName $vmName -CommandId 'RunPowerShellScript' -ScriptString $command
+    }
+    else {
+        # Linux command to stop SQL Server
+        $command = @"
+            systemctl stop mssql-server
+            if command -v docker &> /dev/null; then
+                if docker ps -q --filter "name=sql-server" &> /dev/null; then
+                    docker stop sql-server
+                fi
+            fi
+"@
+        
+        Invoke-AzVMRunCommand -ResourceGroupName $resourceGroupName -VMName $vmName -CommandId 'RunShellScript' -ScriptString $command
+    }
+}
+
+# Function to start SQL Server services
+function Start-SQLServices {
+    param (
+        [string]$vmName,
+        [string]$osType
+    )
+    
+    Write-Output "Starting SQL Services on $osType..." 
+    
+    if ($osType -eq "Windows") {
+        $command = {
+            $services = Get-Service | Where-Object {$_.DisplayName -like "*SQL Server*" -and $_.Status -eq "Stopped"}
+            foreach ($service in $services) {
+                Start-Service -Name $service.Name
+            }
+        }
+        
+        Invoke-AzVMRunCommand -ResourceGroupName $resourceGroupName -VMName $vmName -CommandId 'RunPowerShellScript' -ScriptString $command
+    }
+    else {
+        # Linux command to start SQL Server
+        $command = @"
+            systemctl start mssql-server
+            if command -v docker &> /dev/null; then
+                if docker ps -a -q --filter "name=sql-server" &> /dev/null; then
+                    docker start sql-server
+                fi
+            fi
+"@
+        
+        Invoke-AzVMRunCommand -ResourceGroupName $resourceGroupName -VMName $vmName -CommandId 'RunShellScript' -ScriptString $command
+    }
+}
+
+# Main execution logic
+try {
+    Write-Output "Starting VM automation script..." 
+    Write-Output "Checking Azure connection..." 
+    
+    # Connect to Azure - Modified authentication approach
+    try {
+        $null = Get-AzContext
+        Write-Output "Using existing Azure connection" 
+    }
+    catch {
+        if ($env:AZURE_RUNBOOK_ENVIRONMENT -eq $true) {
+            Write-Output "Connecting to Azure using Managed Identity..." 
+            Connect-AzAccount -Identity
+        }
+        else {
+            Write-Output "Please login to Azure in the popup window..." 
+            Connect-AzAccount
+        }
+    }
+
+    Write-Output "Setting subscription context..." 
+    Set-AzContext -SubscriptionId $subscriptionId
+
+    Write-Output "Getting current time in IST..." 
+    $currentTime = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date), 'India Standard Time')
+    $currentHour = $currentTime.Hour
+    Write-Output "Current time in IST: $($currentTime.ToString('yyyy-MM-dd HH:mm:ss'))" 
+
+    Write-Output "Checking VM status..." 
+    $vm = Get-AzVM -ResourceGroupName $resourceGroupName -Name $vmName -Status
+    $vmStatus = $vm.Statuses | Where-Object Code -like "PowerState*" | Select-Object -ExpandProperty DisplayStatus
+    Write-Output "Current VM status: $vmStatus" 
+
+    Write-Output "Detecting VM OS type..." 
+    $osType = Get-VMOSType -resourceGroupName $resourceGroupName -vmName $vmName
+    Write-Output "VM OS Type detected: $osType" 
+
+    if (Get-WeekendStatus) {
+        Write-Output "Weekend detected - checking if VM needs to be stopped..." 
+        if ($vmStatus -eq "VM running") {
+            Write-Output "Initiating weekend shutdown sequence..." 
+            Stop-SQLServices -vmName $vmName -osType $osType
+            Write-Output "Waiting 60 seconds for SQL Services to stop completely..." 
+            Start-Sleep -Seconds 60
+            
+            Write-Output "Stopping VM..." 
+            Stop-AzVM -ResourceGroupName $resourceGroupName -Name $vmName -Force
+            Write-Output "VM has been stopped for the weekend" 
+        }
+    }
+    else {
+        Write-Output "Weekday detected - checking schedule..." 
+        if ($currentHour -eq 20) {
+            Write-Output "It's 8 PM IST - checking if VM needs to be stopped..." 
+            if ($vmStatus -eq "VM running") {
+                Write-Output "Initiating evening shutdown sequence..." 
+                Stop-SQLServices -vmName $vmName -osType $osType
+                Write-Output "Waiting 60 seconds for SQL Services to stop completely..." 
+                Start-Sleep -Seconds 60
+                
+                Write-Output "Stopping VM..." 
+                Stop-AzVM -ResourceGroupName $resourceGroupName -Name $vmName -Force
+                Write-Output "VM has been stopped for the night" 
+            }
+        }
+        elseif ($currentHour -eq 8) {
+            Write-Output "It's 8 AM IST - checking if VM needs to be started..." 
+            if ($vmStatus -ne "VM running") {
+                Write-Output "Initiating morning startup sequence..." 
+                Write-Output "Starting VM..." 
+                Start-AzVM -ResourceGroupName $resourceGroupName -Name $vmName
+                
+                Write-Output "Waiting 180 seconds for VM to be fully running..." 
+                Start-Sleep -Seconds 180
+                
+                Write-Output "Starting SQL Services..." 
+                Start-SQLServices -vmName $vmName -osType $osType
+                Write-Output "VM and SQL Services are now running" 
+            }
+        }
+        else {
+            # Check if VM should be running during business hours
+            if ($currentHour -gt 8 -and $currentHour -lt 20) {
+                Write-Output "Business hours detected ($currentHour:00 IST)" 
+                if ($vmStatus -ne "VM running") {
+                    Write-Output "VM is stopped during business hours - initiating startup sequence..." 
+                    Write-Output "Starting VM..." 
+                    Start-AzVM -ResourceGroupName $resourceGroupName -Name $vmName
+                    
+                    Write-Output "Waiting 180 seconds for VM to be fully running..." 
+                    Start-Sleep -Seconds 180
+                    
+                    Write-Output "Starting SQL Services..." 
+                    Start-SQLServices -vmName $vmName -osType $osType
+                    Write-Output "VM and SQL Services are now running" 
+                }
+                else {
+                    Write-Output "VM is already running as expected during business hours" 
+                }
+            }
+            else {
+                Write-Output "Non-business hours ($currentHour:00 IST) - no action needed" 
+            }
+        }
+    }
+    Write-Output "Script execution completed successfully" 
+}
+catch {
+    Write-Output "ERROR: An error occurred during script execution" 
+    Write-Error "An error occurred: $_"
+    $ErrorMessage = $_.Exception.Message
+    Write-Error "Detailed error: $ErrorMessage"
+    throw $_
+}
