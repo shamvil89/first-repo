@@ -8,6 +8,69 @@ foreach ($module in $requiredModules) {
     Import-Module $module -Force
 }
 
+function Get-DiskMaxSizeInTier {
+    param (
+        [string]$SKU,
+        [int]$CurrentSize
+    )
+    
+    # Define disk size tiers (in GB)
+    $PremiumSSDTiers = @{
+        'P4' = 32
+        'P6' = 64
+        'P10' = 128
+        'P15' = 256
+        'P20' = 512
+        'P30' = 1024
+        'P40' = 2048
+        'P50' = 4096
+        'P60' = 8192
+        'P70' = 16384
+        'P80' = 32767
+    }
+    
+    $StandardSSDTiers = @{
+        'E4' = 32
+        'E6' = 64
+        'E10' = 128
+        'E15' = 256
+        'E20' = 512
+        'E30' = 1024
+        'E40' = 2048
+        'E50' = 4096
+        'E60' = 8192
+        'E70' = 16384
+        'E80' = 32767
+    }
+    
+    $StandardHDDTiers = @{
+        'S4' = 32
+        'S6' = 64
+        'S10' = 128
+        'S15' = 256
+        'S20' = 512
+        'S30' = 1024
+        'S40' = 2048
+        'S50' = 4096
+        'S60' = 8192
+        'S70' = 16384
+        'S80' = 32767
+    }
+    
+    # Determine which tier list to use
+    $tiers = switch -Wildcard ($SKU) {
+        "Premium_LRS" { $PremiumSSDTiers }
+        "StandardSSD_LRS" { $StandardSSDTiers }
+        "Standard_LRS" { $StandardHDDTiers }
+        default { $PremiumSSDTiers } # Default to Premium if unknown
+    }
+    
+    # Find the next tier size
+    $maxInCurrentTier = ($tiers.Values | Where-Object { $_ -ge $CurrentSize } | Select-Object -First 1)
+    
+    return $maxInCurrentTier
+}
+
 function Get-AzureVMDiskInfo {
     param (
         [Parameter(Mandatory = $false)]
@@ -54,6 +117,7 @@ function Get-AzureVMDiskInfo {
                         Select-Object -ExpandProperty DisplayStatus
                     
                     # Add OS Disk to results
+                    $maxSize = Get-DiskMaxSizeInTier -SKU $osDisk.Sku.Name -CurrentSize $osDisk.DiskSizeGB
                     $results += [PSCustomObject]@{
                         'Subscription'    = $sub.Name
                         'SubscriptionId'  = $sub.Id
@@ -64,7 +128,9 @@ function Get-AzureVMDiskInfo {
                         'Disk_Name'      = $osDisk.Name
                         'Disk_Type'      = 'OS Disk'
                         'Disk_SKU'       = $osDisk.Sku.Name
-                        'Disk_Size_GB'   = $osDisk.DiskSizeGB
+                        'Current_Size_GB' = $osDisk.DiskSizeGB
+                        'Max_Size_In_Tier_GB' = $maxSize
+                        'Can_Expand_GB'  = $maxSize - $osDisk.DiskSizeGB
                         'Disk_State'     = $osDisk.DiskState
                         'Disk_Location'  = $osDisk.Location
                         'Encryption'     = $osDisk.Encryption.Type
@@ -74,6 +140,7 @@ function Get-AzureVMDiskInfo {
                     # Get Data Disk details
                     foreach ($dataDisk in $vm.StorageProfile.DataDisks) {
                         $disk = Get-AzDisk -ResourceGroupName $vm.ResourceGroupName -DiskName $dataDisk.Name
+                        $maxSize = Get-DiskMaxSizeInTier -SKU $disk.Sku.Name -CurrentSize $disk.DiskSizeGB
                         
                         $results += [PSCustomObject]@{
                             'Subscription'    = $sub.Name
@@ -85,7 +152,9 @@ function Get-AzureVMDiskInfo {
                             'Disk_Name'      = $disk.Name
                             'Disk_Type'      = 'Data Disk'
                             'Disk_SKU'       = $disk.Sku.Name
-                            'Disk_Size_GB'   = $disk.DiskSizeGB
+                            'Current_Size_GB' = $disk.DiskSizeGB
+                            'Max_Size_In_Tier_GB' = $maxSize
+                            'Can_Expand_GB'  = $maxSize - $disk.DiskSizeGB
                             'Disk_State'     = $disk.DiskState
                             'Disk_Location'  = $disk.Location
                             'Encryption'     = $disk.Encryption.Type
