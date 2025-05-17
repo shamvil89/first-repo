@@ -1,0 +1,35 @@
+trigger:
+  - main  # or your default branch
+
+parameters:
+  - name: sourcePipelineId
+    type: number
+    default: 0
+  - name: newPipelineName
+    type: string
+    default: ''
+  - name: projectName
+    type: string
+    default: ''
+
+variables:
+  - group: azure-devops-variables  # Create this variable group in your Azure DevOps project
+
+pool:
+  vmImage: 'windows-latest'
+
+steps:
+- checkout: self
+
+- task: PowerShell@2
+  name: ClonePipeline
+  inputs:
+    filePath: '$(System.DefaultWorkingDirectory)/pipeline_cloner.ps1'
+    arguments: >
+      -OrganizationUrl "$(System.CollectionUri)"
+      -ProjectName "${{ parameters.projectName }}"
+      -SourcePipelineId ${{ parameters.sourcePipelineId }}
+      -NewPipelineName "${{ parameters.newPipelineName }}"
+      -Pat "$(AZURE_DEVOPS_PAT)"
+  env:
+    AZURE_DEVOPS_PAT: $(AZURE_DEVOPS_PAT)  # This should be stored as a secret variable 
