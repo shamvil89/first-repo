@@ -71,7 +71,7 @@ function Get-NewPipelineName {
     return $newName
 }
 
-# Function to get pipeline ID from name
+# Function to get pipeline details from name
 function Get-PipelineIdFromName {
     param (
         [string]$OrgUrl,
@@ -89,14 +89,71 @@ function Get-PipelineIdFromName {
         throw "No pipeline found with name: $PipelineName"
     }
     elseif ($response.count -gt 1) {
-        Write-Host "Multiple pipelines found with name '$PipelineName'. Using the first one."
-        Write-Host "Available pipelines:"
+        Write-Host "Multiple pipelines found with name '$PipelineName'. Listing all matches:" -ForegroundColor Yellow
+        Write-Host "----------------------------------------"
         foreach ($def in $response.value) {
-            Write-Host "- $($def.name) (ID: $($def.id))"
+            $pipelineType = if ($def.process.type -eq 1) { "GUI-based (Classic)" } else { "YAML-based" }
+            Write-Host "Name: $($def.name)"
+            Write-Host "ID: $($def.id)"
+            Write-Host "Type: $pipelineType"
+            Write-Host "Path: $($def.path)"
+            Write-Host "Created: $($def.createdDate)"
+            Write-Host "----------------------------------------"
         }
+        
+        Write-Host "Using the first pipeline in the list." -ForegroundColor Yellow
     }
 
-    return $response.value[0].id
+    $selectedPipeline = $response.value[0]
+    $pipelineType = if ($selectedPipeline.process.type -eq 1) { "GUI-based (Classic)" } else { "YAML-based" }
+    
+    Write-Host "Selected pipeline details:" -ForegroundColor Cyan
+    Write-Host "- Name: $($selectedPipeline.name)"
+    Write-Host "- Type: $pipelineType"
+    Write-Host "- ID: $($selectedPipeline.id)"
+    Write-Host "- Path: $($selectedPipeline.path)"
+    
+    return $selectedPipeline.id
+}
+
+# Function to preserve GUI-specific properties
+function Update-PipelineDefinition {
+    param (
+        [object]$Definition,
+        [string]$NewName
+    )
+    
+    # Remove properties that should not be copied
+    $Definition.PSObject.Properties.Remove('id')
+    $Definition.PSObject.Properties.Remove('revision')
+    $Definition.name = $NewName
+    
+    # Handle GUI-based pipeline specific properties
+    if ($Definition.process.type -eq 1) {
+        Write-Host "Processing GUI-based pipeline properties..." -ForegroundColor Cyan
+        
+        # Preserve important GUI pipeline properties
+        if ($Definition.PSObject.Properties['quality']) {
+            Write-Host "- Preserving build quality settings"
+        }
+        if ($Definition.PSObject.Properties['jobAuthorizationScope']) {
+            Write-Host "- Preserving job authorization scope"
+        }
+        if ($Definition.PSObject.Properties['jobTimeoutInMinutes']) {
+            Write-Host "- Preserving job timeout settings"
+        }
+        
+        # Preserve task groups if present
+        if ($Definition.process.phases) {
+            foreach ($phase in $Definition.process.phases) {
+                if ($phase.steps) {
+                    Write-Host "- Preserving task group configurations"
+                }
+            }
+        }
+    }
+    
+    return $Definition
 }
 
 try {
@@ -122,20 +179,21 @@ try {
     Write-Host "Getting source pipeline definition..."
     $sourcePipeline = Invoke-RestMethod -Uri $getUrl -Headers $headers -Method Get
 
-    # Modify the pipeline definition for the new pipeline
-    $sourcePipeline.PSObject.Properties.Remove('id')
-    $sourcePipeline.PSObject.Properties.Remove('revision')
-    $sourcePipeline.name = $newPipelineName
+    # Update the pipeline definition
+    $newDefinition = Update-PipelineDefinition -Definition $sourcePipeline -NewName $newPipelineName
     
     # Convert to JSON
-    $body = $sourcePipeline | ConvertTo-Json -Depth 100
+    $body = $newDefinition | ConvertTo-Json -Depth 100
 
     # Create the new pipeline
     $createUrl = "$orgUrl/$project/_apis/build/definitions?api-version=7.1"
     Write-Host "Creating new pipeline '$newPipelineName'..."
     $newPipeline = Invoke-RestMethod -Uri $createUrl -Headers $headers -Method Post -Body $body
 
-    Write-Host "Successfully created new pipeline: $($newPipeline.name) (ID: $($newPipeline.id))" -ForegroundColor Green
+    Write-Host "`nPipeline cloned successfully!" -ForegroundColor Green
+    Write-Host "- New Pipeline Name: $($newPipeline.name)"
+    Write-Host "- New Pipeline ID: $($newPipeline.id)"
+    Write-Host "- Type: $(if ($newPipeline.process.type -eq 1) { 'GUI-based (Classic)' } else { 'YAML-based' })"
 }
 catch {
     Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
