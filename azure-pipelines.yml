@@ -2,9 +2,9 @@ trigger:
   - main  # or your default branch
 
 parameters:
-  - name: sourcePipelineId
-    type: number
-    default: 0
+  - name: sourcePipelineName
+    type: string
+    default: ''
   - name: newPipelineName
     type: string
     default: ''
@@ -28,7 +28,7 @@ steps:
     arguments: >
       -OrganizationUrl "$(System.CollectionUri)"
       -ProjectName "${{ parameters.projectName }}"
-      -SourcePipelineId ${{ parameters.sourcePipelineId }}
+      -SourcePipelineName "${{ parameters.sourcePipelineName }}"
       -NewPipelineName "${{ parameters.newPipelineName }}"
       -Pat "$(AZURE_DEVOPS_PAT)"
   env:

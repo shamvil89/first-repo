@@ -9,7 +9,7 @@ param(
     [string]$ProjectName,
 
     [Parameter(Mandatory=$false)]
-    [int]$SourcePipelineId,
+    [string]$SourcePipelineName,
 
     [Parameter(Mandatory=$false)]
     [string]$NewPipelineName,
@@ -53,13 +53,13 @@ function Get-ProjectName {
     return $project
 }
 
-# Function to get source pipeline ID
-function Get-SourcePipelineId {
-    $pipelineId = $SourcePipelineId
-    if (-not $pipelineId) {
-        $pipelineId = Read-Host "Enter the source pipeline ID"
+# Function to get source pipeline name
+function Get-SourcePipelineName {
+    $pipelineName = $SourcePipelineName
+    if (-not $pipelineName) {
+        $pipelineName = Read-Host "Enter the source pipeline name"
     }
-    return $pipelineId
+    return $pipelineName
 }
 
 # Function to get new pipeline name
@@ -71,12 +71,40 @@ function Get-NewPipelineName {
     return $newName
 }
 
+# Function to get pipeline ID from name
+function Get-PipelineIdFromName {
+    param (
+        [string]$OrgUrl,
+        [string]$Project,
+        [string]$PipelineName,
+        [hashtable]$Headers
+    )
+    
+    # Get all pipeline definitions
+    $listUrl = "$OrgUrl/$Project/_apis/build/definitions?api-version=7.1&name=$PipelineName"
+    Write-Host "Looking up pipeline '$PipelineName'..."
+    $response = Invoke-RestMethod -Uri $listUrl -Headers $Headers -Method Get
+
+    if ($response.count -eq 0) {
+        throw "No pipeline found with name: $PipelineName"
+    }
+    elseif ($response.count -gt 1) {
+        Write-Host "Multiple pipelines found with name '$PipelineName'. Using the first one."
+        Write-Host "Available pipelines:"
+        foreach ($def in $response.value) {
+            Write-Host "- $($def.name) (ID: $($def.id))"
+        }
+    }
+
+    return $response.value[0].id
+}
+
 try {
     # Get required information
     $pat = Get-AzureDevOpsPat
     $orgUrl = Get-OrgUrl
     $project = Get-ProjectName
-    $sourcePipelineId = Get-SourcePipelineId
+    $sourcePipelineName = Get-SourcePipelineName
     $newPipelineName = Get-NewPipelineName
 
     # Create authorization header
@@ -85,6 +113,9 @@ try {
         Authorization = "Basic $base64AuthInfo"
         'Content-Type' = 'application/json'
     }
+
+    # Get the source pipeline ID from name
+    $sourcePipelineId = Get-PipelineIdFromName -OrgUrl $orgUrl -Project $project -PipelineName $sourcePipelineName -Headers $headers
 
     # Get the source pipeline definition
     $getUrl = "$orgUrl/$project/_apis/build/definitions/$($sourcePipelineId)?api-version=7.1"
